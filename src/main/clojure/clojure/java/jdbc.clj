@@ -51,8 +51,15 @@ compatibility but it will be removed before a 1.0.0 release." }
            [java.util Hashtable Map Properties]
            [javax.sql DataSource])
   (:require [clojure.string :as str]
+            [clojure.core.typed :as t :refer [ann U I defalias
+                                              Any IFn TFn
+                                              ExactCount NonEmptyColl]]
             [clojure.walk :as walk]))
 
+(defalias Nameable (U String clojure.lang.Named))
+
+(ann as-sql-name (IFn [[String -> String]          -> [Nameable -> String]]
+                      [[String -> String] Nameable -> String]))
 (defn as-sql-name
   "Given a naming strategy function and a keyword or string, return
    a string per that naming strategy.
@@ -70,6 +77,19 @@ compatibility but it will be removed before a 1.0.0 release." }
          (f n)
          (str/join "." (map f (.split n "\\.")))))))
 
+(defalias SufficientlyCharLike (U Character
+                                  (I (U String (t/Coll Character))
+                                     (ExactCount 1))))
+(defalias VPair (TFn [[x :variance :covariant]]
+                  (I (t/Vec x)
+                     (ExactCount 2))))
+(ann quoted (IFn [(U SufficientlyCharLike (VPair SufficientlyCharLike))
+                  ->
+                  [Any -> String]]
+                 [(U SufficientlyCharLike (VPair SufficientlyCharLike))
+                  Any
+                  ->
+                  String]))
 (defn quoted
   "With a single argument, returns a naming strategy function that quotes
    names. The single argument can either be a single character or a vector
@@ -86,6 +106,7 @@ compatibility but it will be removed before a 1.0.0 release." }
        (str (first q) x (last q))
        (str q x q))))
 
+(t/tc-ignore
 (defn- ^Properties as-properties
   "Convert any seq of pairs to a java.utils.Properties instance.
    Uses as-sql-name to convert both keys and values into strings."
@@ -1083,4 +1104,4 @@ compatibility but it will be removed before a 1.0.0 release." }
   [binding & body]
   (println "DEPRECATED: Use with-db-transaction instead of db-transaction.")
   `(db-transaction* ~(second binding)
-                    (^{:once true} fn* [~(first binding)] ~@body)))
+                    (^{:once true} fn* [~(first binding)] ~@body))))

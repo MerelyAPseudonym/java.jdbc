@@ -12,6 +12,7 @@
   :test-paths ["src/test/clojure"]
   :repositories {"sonatype-oss-public" "https://oss.sonatype.org/content/groups/public/"}
   :dependencies [[org.clojure/clojure "1.7.0"]
+                 [org.clojure/core.typed.rt "0.3.9"]
                  ;; These are just the versions most recently test against
                  ;; for your own projects, use whatever version is most
                  ;; appropriate for you. Again, note that this project.clj

@@ -26,6 +26,11 @@
     <tag>HEAD</tag>
   </scm>
   <dependencies>
+    <dependency>
+      <groupId>org.clojure</groupId>
+      <artifactId>core.typed.rt</artifactId>
+      <version>0.3.9</version>
+    </dependency>
   	<dependency>
   		<groupId>mysql</groupId>
   		<artifactId>mysql-connector-java</artifactId>
