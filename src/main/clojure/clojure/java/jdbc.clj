@@ -51,11 +51,14 @@ compatibility but it will be removed before a 1.0.0 release." }
            [java.util Hashtable Map Properties]
            [javax.sql DataSource])
   (:require [clojure.string :as str]
-            [clojure.core.typed :as t :refer [ann U I defalias
-                                              Any IFn TFn
+            [clojure.core.typed :as t :refer [ann defalias
+                                              IFn U I
+                                              All TFn
+                                              Any HMap Atom1
                                               ExactCount NonEmptyColl]]
             [clojure.walk :as walk]))
 
+(defalias IDontKnowYet Any)
 (defalias Nameable (U String clojure.lang.Named))
 
 (ann as-sql-name (IFn [[String -> String]          -> [Nameable -> String]]
@@ -106,13 +109,20 @@ compatibility but it will be removed before a 1.0.0 release." }
        (str (first q) x (last q))
        (str q x q))))
 
-(t/tc-ignore
+(defalias HVPair (TFn [[k :variance :covariant]
+                       [v :variance :covariant]]
+                   (t/HVec [k v])))
+(defalias PairsSeq (TFn [[k :variance :covariant]
+                         [v :variance :covariant]]
+                     (U (t/Map k v)
+                        (t/Seq (HVPair k v)))))
+(ann as-properties [(PairsSeq Nameable Any) -> Properties])
 (defn- ^Properties as-properties
   "Convert any seq of pairs to a java.utils.Properties instance.
    Uses as-sql-name to convert both keys and values into strings."
   [m]
   (let [p (Properties.)]
-    (doseq [[k v] m]
+    (t/doseq [[k v] :- (HVPair Nameable Any) m]
       (.setProperty p (as-sql-name identity k)
                     (if (instance? clojure.lang.Named v)
                       (as-sql-name identity v)
@@ -120,10 +130,13 @@ compatibility but it will be removed before a 1.0.0 release." }
     p))
 
 ;; convenience for working with different forms of connections
-(defprotocol Connectable
-  (add-connection [db connection])
-  (get-level [db]))
+(t/defprotocol Connectable
+  (add-connection [db connection :- java.sql.Connection] :- Connectable)
+  (get-level [db] :- t/AnyInteger))
 
+(ann ^:no-check  ; because `clojure.core/update-in` lacks a type annotation
+     inc-level (IFn [(HMap :optional {:level (U nil '0)}) -> '{:level '1, :rollback (t/Atom1 Boolean)}]
+                    [(HMap :mandatory {:level t/AnyInteger}) -> (HMap :mandatory {:level Long})]))
 (defn- inc-level
   "Increment the nesting level for a transacted database connection.
    If we are at the top level, also add in a rollback state."
@@ -132,7 +145,7 @@ compatibility but it will be removed before a 1.0.0 release." }
     (if (= 1 (:level nested-db))
       (assoc nested-db :rollback (atom false))
       nested-db)))
-
+(t/tc-ignore
 (extend-protocol Connectable
   String
   (add-connection [s connection] {:connection connection :level 0 :connection-string s})
@@ -145,8 +158,8 @@ compatibility but it will be removed before a 1.0.0 release." }
   nil
   (add-connection [_ connection] {:connection connection :level 0 :legacy true})
   (get-level [_] 0))
-
-(def ^{:private true :doc "Map of classnames to subprotocols"} classnames
+)
+(t/def ^{:private true :doc "Map of classnames to subprotocols"} classnames :- (t/Map String String)
   {"postgresql"     "org.postgresql.Driver"
    "mysql"          "com.mysql.jdbc.Driver"
    "sqlserver"      "com.microsoft.sqlserver.jdbc.SQLServerDriver"
@@ -161,6 +174,11 @@ compatibility but it will be removed before a 1.0.0 release." }
 (def ^{:private true :doc "Map of schemes to subprotocols"} subprotocols
   {"postgres" "postgresql"})
 
+(ann ^:no-check  ; because `clojure.walk/keywordize-keys` lacks a type annotation
+     parse-properties-uri [URI -> (HMap :mandatory {:subname String
+                                                    :subprotocol String}
+                                        :optional {:user String
+                                                   :password String})])
 (defn- parse-properties-uri [^URI uri]
   (let [host (.getHost uri)
         port (if (pos? (.getPort uri)) (.getPort uri))
@@ -181,6 +199,8 @@ compatibility but it will be removed before a 1.0.0 release." }
               :password (second (str/split user-info #":"))})
      (walk/keywordize-keys (into {} query-parts)))))
 
+(t/non-nil-return java.lang.String/substring :all)
+(ann strip-jdbc [String -> String])
 (defn- strip-jdbc [^String spec]
   (if (.startsWith spec "jdbc:")
     (.substring spec 5)
@@ -194,6 +214,19 @@ compatibility but it will be removed before a 1.0.0 release." }
       (list* 'do body))
     (catch ClassNotFoundException _#)))
 
+(ann ^:no-check get-connection [(U (HMap :mandatory {:connection java.sql.Connection})
+                                   (HMap :mandatory {:factory [(HMap) -> java.sql.Connection]})
+                                   (HMap :mandatory {:subprotocol String, :subname String}
+                                         :optional  {:classname String})
+                                   (HMap :mandatory {:dbtype String, :dbname String}
+                                         :optional  {:host String, :port Long})
+                                   (HMap :mandatory {:name (U String javax.naming.Name)}
+                                         :optional  {:environment java.util.Map})
+                                   (HMap :mandatory {:connection-uri String})
+                                   URI
+                                   String)
+                                ->
+                                java.sql.Connection])
 (defn get-connection
   "Creates a connection to a database. db-spec is usually a map containing connection
   parameters but can also be a URI or a String. The various possibilities are described
@@ -313,6 +346,7 @@ compatibility but it will be removed before a 1.0.0 release." }
    (let [^String msg (format "db-spec %s is missing a required parameter" db-spec)]
      (throw (IllegalArgumentException. msg)))))
 
+(ann make-name-unique [(t/Coll String) String t/AnyInteger -> String])
 (defn- make-name-unique
   "Given a collection of column names and a new column name,
    return the new column name made unique, if necessary, by
@@ -323,6 +357,7 @@ compatibility but it will be removed before a 1.0.0 release." }
       suffixed-name
       (recur cols col-name (inc n)))))
 
+(ann ^:no-check make-cols-unique [(t/Coll String) -> (t/Coll String)])
 (defn- make-cols-unique
   "Given a collection of column names, rename duplicates so
    that the result is a collection of unique column names."
@@ -332,30 +367,30 @@ compatibility but it will be removed before a 1.0.0 release." }
     (reduce (fn [unique-cols col-name]
               (conj unique-cols (make-name-unique unique-cols col-name 1))) []  cols)))
 
-(defprotocol ISQLValue
+(t/defprotocol ISQLValue
   "Protocol for creating SQL values from Clojure values. Default
    implementations (for Object and nil) just return the argument,
    but it can be extended to provide custom behavior to support
    exotic types supported by different databases."
   (sql-value [val] "Convert a Clojure value into a SQL value."))
-
+(t/tc-ignore
 (extend-protocol ISQLValue
   Object
   (sql-value [v] v)
 
   nil
   (sql-value [_] nil))
-
-(defprotocol ISQLParameter
+)
+(t/defprotocol ISQLParameter
   "Protocol for setting SQL parameters in statement objects, which
    can convert from Clojure values. The default implementation just
    delegates the conversion to ISQLValue's sql-value conversion and
    uses .setObject on the parameter. It can be extended to use other
    methods of PreparedStatement to convert and set parameter values."
-  (set-parameter [val stmt ix]
+  (set-parameter [val stmt :- PreparedStatement, ix #_:- #_int] :- nil
     "Convert a Clojure value into a SQL value and store it as the ix'th
      parameter in the given SQL statement object."))
-
+(t/tc-ignore
 (extend-protocol ISQLParameter
   Object
   (set-parameter [v ^PreparedStatement s ^long i]
@@ -364,15 +399,15 @@ compatibility but it will be removed before a 1.0.0 release." }
   nil
   (set-parameter [_ ^PreparedStatement s ^long i]
     (.setObject s i (sql-value nil))))
-
-(defprotocol IResultSetReadColumn
+)
+(t/defprotocol IResultSetReadColumn
   "Protocol for reading objects from the java.sql.ResultSet. Default
    implementations (for Object and nil) return the argument, and the
    Boolean implementation ensures a canonicalized true/false value,
    but it can be extended to provide custom behavior for special types."
   (result-set-read-column [val rsmeta idx]
     "Function for transforming values after reading them from the database"))
-
+(t/tc-ignore
 (extend-protocol IResultSetReadColumn
   Object
   (result-set-read-column [x _2 _3] x)
@@ -382,7 +417,15 @@ compatibility but it will be removed before a 1.0.0 release." }
 
   nil
   (result-set-read-column [_1 _2 _3] nil))
+)
 
+
+(t/non-nil-return java.sql.ResultSet/getMetaData :all)  ; not 100% sure about this
+(t/non-nil-return java.sql.ResultSetMetaData/getColumnCount :all)  ; not 100% sure about this
+(t/non-nil-return java.sql.ResultSetMetaData/getColumnLabel :all)  ; not 100% sure about this
+(ann ^:no-check result-set-seq [java.sql.ResultSet & :optional {:identifiers [String -> String], :as-arrays? (U ':cols-as-is)}
+                                ->
+                                (t/Option (t/ASeq Any))])
 (defn result-set-seq
   "Creates and returns a lazy sequence of maps corresponding to the rows in the
    java.sql.ResultSet rs. Loosely based on clojure.core/resultset-seq but it
@@ -392,9 +435,11 @@ compatibility but it will be removed before a 1.0.0 release." }
                     :or {identifiers str/lower-case}}]
   (let [rsmeta (.getMetaData rs)
         idxs (range 1 (inc (.getColumnCount rsmeta)))
+        _ (assert (every? (partial instance? Integer) idxs))
         col-name-fn (if (= :cols-as-is as-arrays?) identity make-cols-unique)
         keys (->> idxs
-                  (map (fn [^Integer i] (.getColumnLabel rsmeta i)))
+                  (map (t/fn [^Integer i :- Integer] :- String
+                         (.getColumnLabel rsmeta i)))
                   col-name-fn
                   (map (comp keyword identifiers)))
         row-values (fn [] (map (fn [^Integer i] (result-set-read-column (.getObject rs i) rsmeta i)) idxs))
@@ -415,6 +460,7 @@ compatibility but it will be removed before a 1.0.0 release." }
       (cons (vec keys) (rows))
       (records))))
 
+(ann ^:no-check execute-batch [Statement -> (t/Seq t/AnyInteger)])
 (defn- execute-batch
   "Executes a batch of SQL commands and returns a sequence of update counts.
    (-2) indicates a single operation operating on an unknown number of rows.
@@ -427,18 +473,28 @@ compatibility but it will be removed before a 1.0.0 release." }
       (list (.getUpdateCount stmt))
       (seq result))))
 
+(ann result-set-concurrency (HMap :mandatory {:read-only int
+                                              :updatable int}
+                                  :complete? true))
 (def ^{:private true
        :doc "Map friendly :concurrency values to ResultSet constants."}
   result-set-concurrency
   {:read-only ResultSet/CONCUR_READ_ONLY
    :updatable ResultSet/CONCUR_UPDATABLE})
 
+(ann result-set-holdability (HMap :mandatory {:hold int
+                                              :close int}
+                                  :complete? true))
 (def ^{:private true
        :doc "Map friendly :cursors values to ResultSet constants."}
   result-set-holdability
   {:hold ResultSet/HOLD_CURSORS_OVER_COMMIT
    :close ResultSet/CLOSE_CURSORS_AT_COMMIT})
 
+(ann result-set-type (HMap :mandatory {:forward-only int
+                                       :scroll-insensitive int
+                                       :scroll-sensitive int}
+                           :complete? true))
 (def ^{:private true
        :doc "Map friendly :type values to ResultSet constants."}
   result-set-type
@@ -446,6 +502,17 @@ compatibility but it will be removed before a 1.0.0 release." }
    :scroll-insensitive ResultSet/TYPE_SCROLL_INSENSITIVE
    :scroll-sensitive ResultSet/TYPE_SCROLL_SENSITIVE})
 
+(t/non-nil-return java.sql.Connection/prepareStatement :all)  ; kinda guessing on this one
+(ann ^:no-check  ; there's only one specific error holding this one back
+     prepare-statement [java.sql.Connection String & :optional {:return-keys Boolean
+                                                                :result-type (U ':forward-only ':scroll-insensitive ':scroll-sensitive)  ; TODO is there a way to say "it must be one of the keys from `result-set-type`
+                                                                :concurrency (U ':read-only ':updatable)
+                                                                :cursors (U ':hold ':close)
+                                                                :fetch-size int
+                                                                :max-rows int
+                                                                :timeout int}
+                        ->
+                        PreparedStatement])
 (defn prepare-statement
   "Create a prepared statement from a connection, a SQL string and an
    optional list of parameters:
@@ -484,13 +551,16 @@ compatibility but it will be removed before a 1.0.0 release." }
     (when timeout (.setQueryTimeout stmt timeout))
     stmt))
 
+(ann set-parameters [PreparedStatement (t/Seqable ISQLParameter) -> nil])
 (defn- set-parameters
   "Add the parameters to the given statement."
   [stmt params]
-  (dorun (map-indexed (fn [ix value]
+  (dorun (map-indexed (t/fn [ix :- t/AnyInteger
+                             value :- ISQLParameter]
                         (set-parameter value stmt (inc ix)))
                       params)))
 
+(ann ^:no-check print-sql-exception [SQLException -> nil])
 (defn print-sql-exception
   "Prints the contents of an SQLException to *out*"
   [^SQLException exception]
@@ -505,18 +575,21 @@ compatibility but it will be removed before a 1.0.0 release." }
               (.getSQLState exception)
               (.getErrorCode exception)))))
 
+(ann print-sql-exception-chain [SQLException -> nil])
 (defn print-sql-exception-chain
   "Prints a chain of SQLExceptions to *out*"
   [^SQLException exception]
-  (loop [e exception]
+  (t/loop [e :- (t/Option SQLException), exception]
     (when e
       (print-sql-exception e)
       (recur (.getNextException e)))))
 
+(ann special-counts (t/Map int String))
 (def ^{:private true} special-counts
   {Statement/EXECUTE_FAILED "EXECUTE_FAILED"
    Statement/SUCCESS_NO_INFO "SUCCESS_NO_INFO"})
 
+(ann print-update-counts [BatchUpdateException -> nil])
 (defn print-update-counts
   "Prints the update counts from a BatchUpdateException to *out*"
   [^BatchUpdateException exception]
@@ -530,19 +603,30 @@ compatibility but it will be removed before a 1.0.0 release." }
       (.getUpdateCounts exception))))
 
 ;; java.jdbc pieces rewritten to not use dynamic bindings
+#_
+(ann db-find-connection (IFn ['{:connection java.sql.Connection} -> java.sql.Connection]
+                             ['{} -> nil]
+                             [Any -> false]))
 
+(ann ^:no-check
+     db-find-connection (All [x]
+                          (IFn ['{:connection x} -> x]
+                               ['{} -> nil]
+                               [Any -> false])))
 (defn db-find-connection
   "Returns the current database connection (or nil if there is none)"
   ^java.sql.Connection [db]
   (and (map? db)
        (:connection db)))
 
+(ann db-connection [Any -> java.sql.Connection])
 (defn db-connection
   "Returns the current database connection (or throws if there is none)"
   ^java.sql.Connection [db]
   (or (db-find-connection db)
       (throw (Exception. "no current database connection"))))
 
+(ann ^:no-check throw-non-rte [Throwable -> Exception])
 (defn- throw-non-rte
   "This ugliness makes it easier to catch SQLException objects
   rather than something wrapped in a RuntimeException which
@@ -553,23 +637,27 @@ compatibility but it will be removed before a 1.0.0 release." }
         (and (instance? RuntimeException ex) (.getCause ex)) (throw-non-rte (.getCause ex))
         :else (throw ex)))
 
+(ann db-set-rollback-only! ['{:rollback (Atom1 Boolean)} -> true])
 (defn db-set-rollback-only!
   "Marks the outermost transaction such that it will rollback rather than
   commit when complete"
   [db]
   (reset! (:rollback db) true))
 
+(ann db-unset-rollback-only! ['{:rollback (Atom1 Boolean)} -> false])
 (defn db-unset-rollback-only!
   "Marks the outermost transaction such that it will not rollback when complete"
   [db]
   (reset! (:rollback db) false))
 
+(ann db-is-rollback-only ['{:rollback (Atom1 Boolean)} -> Boolean])  ; TODO more restrictive than impl. code
 (defn db-is-rollback-only
   "Returns true if the outermost transaction will rollback rather than
   commit when complete"
   [db]
   (deref (:rollback db)))
 
+(ann isolation-levels (t/Map t/Kw int))
 (def ^{:private true :doc "Transaction isolation levels."}
   isolation-levels
   {:none             java.sql.Connection/TRANSACTION_NONE
@@ -578,6 +666,11 @@ compatibility but it will be removed before a 1.0.0 release." }
    :repeatable-read  java.sql.Connection/TRANSACTION_REPEATABLE_READ
    :serializable     java.sql.Connection/TRANSACTION_SERIALIZABLE})
 
+(ann ^:no-check  ; until I figure out extend-protocol 'n stuff
+     db-transaction* [Connectable [Any * -> Any] & :optional {:isolation (U ':none ':read-committed ':read-uncommitted ':repeatable-read ':serializable)
+                                                              :read-only? Boolean}
+                      ->
+                      Any])
 (defn db-transaction*
   "Evaluates func as a transaction on the open database connection. Any
   nested transactions are absorbed into the outermost transaction. By
@@ -668,7 +761,20 @@ compatibility but it will be removed before a 1.0.0 release." }
   `(with-open [^java.sql.Connection con# (get-connection ~(second binding))]
      (let [~(first binding) (.getMetaData con#)]
        ~@body)))
-
+(comment
+(ann metadata-result (All [x]
+                       (IFn [java.sql.ResultSet
+                             & :optional {:identifiers [String -> String]
+                                          :row-fn [Any -> Any]
+                                          :as-arrays? Boolean
+                                          :result-set-fn IDontKnowYet}
+                             ->
+                             clojure.lang.LazySeq  ; or perhaps (t/ASeq Any)?
+                             ]
+                            [x & :optional {:identifiers [String -> String]
+                                            :row-fn [Any -> Any]
+                                            :result-set-fn IDontKnowYet}
+                             -> x])))
 (defn metadata-result
   "If the argument is a java.sql.ResultSet, turn it into a result-set-seq,
    else return it as-is. This makes working with metadata easier.
@@ -679,12 +785,13 @@ compatibility but it will be removed before a 1.0.0 release." }
                   :or {identifiers str/lower-case row-fn identity}}]
   (let [result-set-fn (or result-set-fn (if as-arrays? vec doall))]
     (if (instance? java.sql.ResultSet rs-or-value)
-      ((^{:once true} fn* [rs]
-        (result-set-fn (if as-arrays?
-                         (cons (first rs)
-                               (map row-fn (rest rs)))
-                         (map row-fn rs))))
-       (result-set-seq rs-or-value :identifiers identifiers :as-arrays? as-arrays?))
+      ((t/ann-form (^{:once true} fn* [rs]
+                     (result-set-fn (if as-arrays?
+                                      (cons (first rs)
+                                            (map row-fn (rest rs)))
+                                      (map row-fn rs))))
+                   [clojure.lang.LazySeq -> (t/ASeq Any)])
+        (result-set-seq rs-or-value :identifiers identifiers :as-arrays? as-arrays?))
       rs-or-value)))
 
 (defn db-do-commands
@@ -848,12 +955,12 @@ compatibility but it will be removed before a 1.0.0 release." }
   {:arglists '([db-spec sql-and-params
                 :as-arrays? false :identifiers clojure.string/lower-case
                 :result-set-fn doall :row-fn identity]
-                 [db-spec sql-and-params
-                  :as-arrays? true :identifiers clojure.string/lower-case
-                  :result-set-fn vec :row-fn identity]
-                   [db-spec [sql-string & params]]
-                     [db-spec [stmt & params]]
-                       [db-spec [option-map sql-string & params]])}
+               [db-spec sql-and-params
+                :as-arrays? true :identifiers clojure.string/lower-case
+                :result-set-fn vec :row-fn identity]
+               [db-spec [sql-string & params]]
+               [db-spec [stmt & params]]
+               [db-spec [option-map sql-string & params]])}
   [db sql-params & {:keys [result-set-fn row-fn identifiers as-arrays?]
                     :or {row-fn identity
                          identifiers str/lower-case}}]

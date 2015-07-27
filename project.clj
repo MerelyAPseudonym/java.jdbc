@@ -12,7 +12,7 @@
   :test-paths ["src/test/clojure"]
   :repositories {"sonatype-oss-public" "https://oss.sonatype.org/content/groups/public/"}
   :dependencies [[org.clojure/clojure "1.7.0"]
-                 [org.clojure/core.typed.rt "0.3.9"]
+                 [org.clojure/core.typed "0.3.9"]
                  ;; These are just the versions most recently test against
                  ;; for your own projects, use whatever version is most
                  ;; appropriate for you. Again, note that this project.clj
@@ -25,7 +25,7 @@
                  [org.postgresql/postgresql "9.4-1201-jdbc41"]
                  [org.xerial/sqlite-jdbc "3.8.10.1"]
                  ;; if you have the MS driver in your local repo
-                 [sqljdbc4 "4.0"]
+                 ;;[sqljdbc4 "4.0"]
                  ]
   :profiles {:1.3 {:dependencies [[org.clojure/clojure "1.3.0"]]}
              :1.4 {:dependencies [[org.clojure/clojure "1.4.0"]]}

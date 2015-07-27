@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ReplState" timestamp="1438029016534">{:repl-history {:ide [], :local [&quot;(require '[clojure.core.typed :as t])&quot; &quot;(t/cf \&quot;foo\&quot; (t/Coll Character))&quot; &quot;(require 'clojure.java.jdbc)&quot; &quot;(t/cf fnil)&quot; &quot;(t/cf (fnil inc 0))&quot; &quot;(doc distinct?)&quot; &quot;(t/cf apply)&quot; &quot;(t/cf distinct?)&quot; &quot;(t/check-ns 'clojure.java.jdbc)&quot; &quot;(apply distinct? [\&quot;foo\&quot; \&quot;bar\&quot;])&quot; &quot;(t/cf (apply distinct? [\&quot;foo\&quot; \&quot;bar\&quot;]))&quot;], :remote []}}</component>
+</project>
